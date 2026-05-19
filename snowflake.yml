@@ -7,3 +7,7 @@ entities:
       - pyproject.toml
       - edw_config_streamlit_app.py
       - .streamlit/config.toml
+      - app_pages/balance_sheet_mapping.py
+      - app_pages/balance_sheet_rules.py
+      - app_pages/investment_mapping.py
+      - app_pages/account_exceptions.py
