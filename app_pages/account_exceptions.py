@@ -6,8 +6,8 @@ from snowflake.snowpark.context import get_active_session
 
 session = get_active_session()
 
-st.set_page_config(page_title="Account Exceptions Admin", layout="wide")
-st.title("Account Exceptions Admin")
+# st.set_page_config(page_title="Account Exceptions Admin", layout="wide")
+# st.title("Account Exceptions Admin")
 
 @st.cache_data(ttl=30)
 def load_master_data():

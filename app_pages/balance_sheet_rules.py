@@ -6,8 +6,8 @@ from snowflake.snowpark.context import get_active_session
 
 session = get_active_session()
 
-st.set_page_config(page_title="Balance Sheet Rules Admin")
-st.title("Balance Sheet Rules Admin")
+# st.set_page_config(page_title="Balance Sheet Rules Admin")
+# st.title("Balance Sheet Rules Admin")
 
 @st.cache_data(ttl=600)
 def load_master_data():
