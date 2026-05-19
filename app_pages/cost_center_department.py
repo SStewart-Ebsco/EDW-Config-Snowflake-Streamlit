@@ -2,9 +2,8 @@ import streamlit as st
 import pandas as pd
 import json
 import uuid
-from snowflake.snowpark.context import get_active_session
 
-session = get_active_session()
+session = st.session_state["conn"].session()
 
 # st.set_page_config(page_title="Account Exceptions Admin", layout="wide")
 # st.title("Account Exceptions Admin")

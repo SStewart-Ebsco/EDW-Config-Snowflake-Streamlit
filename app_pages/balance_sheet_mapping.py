@@ -2,10 +2,8 @@ import streamlit as st
 import pandas as pd
 import json
 import uuid
-from snowflake.snowpark.context import get_active_session
 
-# session = get_active_session()
-session = st.connection("snowflake").session()
+session = st.session_state["conn"].session()
 
 # st.set_page_config(page_title="Balance Sheet Mapping Admin", layout="wide")
 # st.title("Balance Sheet Mapping Admin")
@@ -30,7 +28,7 @@ def load_master_data():
 def write_events(events: list[dict]):
     if not events:
         return
-    user = session.sql("SELECT CURRENT_USER()").collect()[0][0]
+    user = st.user.user_name
     for evt in events:
         evt["Changed By"] = user
         payload = json.dumps(evt)

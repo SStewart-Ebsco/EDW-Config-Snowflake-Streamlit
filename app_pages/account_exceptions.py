@@ -2,12 +2,8 @@ import streamlit as st
 import pandas as pd
 import json
 import uuid
-from snowflake.snowpark.context import get_active_session
 
-session = get_active_session()
-
-# st.set_page_config(page_title="Account Exceptions Admin", layout="wide")
-# st.title("Account Exceptions Admin")
+session = st.session_state["conn"].session()
 
 @st.cache_data(ttl=30)
 def load_master_data():
