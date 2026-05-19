@@ -9,7 +9,6 @@ page = st.navigation([
     st.Page("app_pages/balance_sheet_rules.py", title="Balance Sheet Rules", icon=":material/rule:"),
     st.Page("app_pages/investment_mapping.py", title="Investment Mapping", icon=":material/attach_money:"),
     st.Page("app_pages/account_exceptions.py", title="Account Exceptions", icon=":material/warning:"),
-    st.Page("app_pages/gl_groupings.py", title="GL Groupings", icon=":material/category:"),
 ])
 
 st.title(f"{page.title} Admin")
