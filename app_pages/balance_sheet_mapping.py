@@ -55,7 +55,7 @@ def find_overlaps(df, entity, gl_min, gl_max):
 
 master_df = load_master_data()
 
-tab_edit, tab_add, tab_audit = st.tabs(["Edit Existing", "Add New", "Audit Trail"])
+tab_edit, tab_add = st.tabs(["Edit Existing", "Add New"])
 
 with tab_edit:
     st.caption("Edit rows below. Changes are saved as change events with full audit trail.")
@@ -191,41 +191,4 @@ with tab_add:
                 st.cache_data.clear()
                 st.success(f"Added mapping: {new_id}")
                 st.rerun()
-
-with tab_audit:
-    st.subheader("Audit Trail")
-
-    all_audit_ids = session.sql("""
-        SELECT DISTINCT "ID"
-        FROM CONFIG.BRONZE."Balance_Sheet_Mapping_AuditData"
-        ORDER BY "ID"
-    """).to_pandas()["ID"].tolist()
-
-    filter_id = st.selectbox(
-        "Filter by ID (optional)",
-        options=["All"] + all_audit_ids,
-    )
-
-    where = ""
-    if filter_id != "All":
-        where = f"""WHERE "ID" = '{filter_id}'"""
-    audit_df = session.sql(f"""
-        SELECT
-            "ID",
-            "BalanceSheet Entity",
-            "Minimum GL Value",
-            "Maximum GL Value",
-            "Enabled",
-            "Changed By",
-            "Changed On",
-            "Change Offset"
-        FROM CONFIG.BRONZE."Balance_Sheet_Mapping_AuditData"
-        {where}
-        ORDER BY "ID", "Changed On" DESC
-    """).to_pandas()
-    st.dataframe(audit_df, use_container_width=True, hide_index=True)
-
-    if st.button("Export CSV"):
-        csv = audit_df.to_csv(index=False)
-        st.code(csv, language="csv")
 
