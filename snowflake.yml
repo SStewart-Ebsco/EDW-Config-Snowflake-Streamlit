@@ -15,3 +15,12 @@ entities:
       - app_pages/cost_center_departments.py
       - app_pages/dso_analysis.py
       - app_pages/sap_user_mapping.py
+    identifier:
+      database: CONFIG
+      schema: APP
+      name: EDW_CONFIG
+    title: EDW-Config
+    query_warehouse: RH_WAREHOUSE
+    compute_pool: STREAMLIT_COMPUTE_POOL
+    run_mode: SpcsOnly
+    execute_as: OWNER
