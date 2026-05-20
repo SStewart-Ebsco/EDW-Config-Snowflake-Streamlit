@@ -1,6 +1,8 @@
 import os
 import streamlit as st
 
+st.set_page_config(page_title="EDW Config", layout="wide")
+
 conn = st.connection("snowflake", ttl=os.getenv("SNOWFLAKE_CONNECTION_TTL"))
 st.session_state["conn"] = conn
 
