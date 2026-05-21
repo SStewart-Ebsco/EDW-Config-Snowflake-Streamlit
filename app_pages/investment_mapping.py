@@ -37,13 +37,13 @@ def write_events(events: list[dict]):
     for evt in events:
         evt["Changed By"] = user
         payload = json.dumps(evt)
-        session.sql(f"""
+        session.sql("""
             INSERT INTO CONFIG.RAW.INVESTMENT_MAPPING_GL_EVENT_DATA
                 (SERIALIZED_SOURCE, EVENT_TIME)
             SELECT
-                PARSE_JSON('{payload.replace("'", "''")}'),
+                PARSE_JSON(?),
                 CURRENT_TIMESTAMP()
-        """).collect()
+        """, params=[payload]).collect()
 
 def find_overlaps(df, investment, profit_center, gl_min, gl_max):
     filtered_df = df[
@@ -63,7 +63,7 @@ if st.button("🔄 Refresh Data", key="refresh"):
     st.cache_data.clear()
     st.rerun()
     
-tab_edit, tab_add = st.tabs(["Edit Existing", "Add New"])
+tab_edit, tab_add, tab_bulk = st.tabs(["Edit Existing", "Add New", "Bulk Upload"])
 
 with tab_edit:
     st.caption("Edit rows below. Changes are saved as change events with full audit trail.")
@@ -220,3 +220,79 @@ with tab_add:
                 write_events([evt])
                 st.cache_data.clear()
                 st.success(f"Added mapping: {new_id}. Refresh to see updates.")
+
+with tab_bulk:
+    st.subheader("Bulk Upload")
+    st.caption("Upload a CSV file with columns: Investment, Profit Center, Is Exclusion, GL Min, GL Max")
+
+    uploaded_file = st.file_uploader("Choose a CSV file", type="csv", key="bulk_upload")
+
+    if uploaded_file is not None:
+        try:
+            upload_df = pd.read_csv(uploaded_file, dtype=str).fillna("")
+            required_cols = {"Investment", "Profit Center", "GL Min"}
+            all_cols = {"Investment", "Profit Center", "Is Exclusion", "GL Min", "GL Max"}
+            missing_cols = required_cols - set(upload_df.columns)
+            if missing_cols:
+                st.error(f"CSV is missing required columns: {', '.join(missing_cols)}")
+            else:
+                extra_cols = set(upload_df.columns) - all_cols
+                if extra_cols:
+                    st.warning(f"Ignoring unrecognized columns: {', '.join(extra_cols)}")
+                upload_df = upload_df[[c for c in all_cols if c in upload_df.columns]]
+                for col in all_cols:
+                    if col not in upload_df.columns:
+                        upload_df[col] = ""
+
+                invalid_rows = upload_df[upload_df["Investment"].str.strip() == ""]
+                if not invalid_rows.empty:
+                    st.error(f"{len(invalid_rows)} row(s) are missing an Investment value.")
+                else:
+                    master_key = master_df["Investment"] + "|" + master_df["Profit Center"] + "|" + master_df["GL Min"].astype(str)
+                    upload_key = upload_df["Investment"].str.strip() + "|" + upload_df["Profit Center"].str.strip() + "|" + upload_df["GL Min"].str.strip()
+                    existing_mask = upload_key.isin(master_key)
+                    num_updates = existing_mask.sum()
+                    num_new = len(upload_df) - num_updates
+                    if num_updates > 0:
+                        st.info(f"{num_updates} row(s) match existing mappings and will be treated as updates.")
+                    if num_new > 0:
+                        st.info(f"{num_new} row(s) will be added as new mappings.")
+
+                    st.dataframe(upload_df, hide_index=True, use_container_width=True)
+
+                    if st.button("Confirm Bulk Upload", type="primary", key="bulk_confirm"):
+                        events = []
+                        key_to_id = dict(zip(master_key, master_df["ID"]))
+                        for _, row in upload_df.iterrows():
+                            k = row["Investment"].strip() + "|" + row["Profit Center"].strip() + "|" + row["GL Min"].strip()
+                            existing_id = key_to_id.get(k)
+                            gl_min = row["GL Min"].strip()
+                            gl_max = row["GL Max"].strip() if row["GL Max"].strip() else gl_min
+                            is_excl = row["Is Exclusion"].strip().lower() in ("true", "1", "yes")
+                            events.append({
+                                "ID": existing_id if existing_id else str(uuid.uuid4()),
+                                "Investment": row["Investment"].strip(),
+                                "Profit Center": row["Profit Center"].strip(),
+                                "Is Exclusion": is_excl,
+                                "GL Min": gl_min,
+                                "GL Max": gl_max,
+                                "Enabled": True,
+                            })
+                        total = len(events)
+                        progress_bar = st.progress(0, text=f"Processing 0 of {total}...")
+                        user = st.user.user_name
+                        for i, evt in enumerate(events, 1):
+                            evt["Changed By"] = user
+                            payload = json.dumps(evt)
+                            session.sql("""
+                                INSERT INTO CONFIG.RAW.INVESTMENT_MAPPING_GL_EVENT_DATA
+                                    (SERIALIZED_SOURCE, EVENT_TIME)
+                                SELECT
+                                    PARSE_JSON(?),
+                                    CURRENT_TIMESTAMP()
+                            """, params=[payload]).collect()
+                            progress_bar.progress(i / total, text=f"Processed {i} of {total}...")
+                        st.cache_data.clear()
+                        st.rerun()
+        except Exception as e:
+            st.error(f"Error reading CSV: {e}")

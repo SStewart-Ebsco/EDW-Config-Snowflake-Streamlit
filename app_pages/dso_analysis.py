@@ -31,13 +31,13 @@ def write_events(events: list[dict]):
     for evt in events:
         evt["Changed By"] = user
         payload = json.dumps(evt)
-        session.sql(f"""
+        session.sql("""
             INSERT INTO CONFIG.RAW.DSO_ANALYSIS_EVENT_DATA
                 (SERIALIZED_SOURCE, EVENT_TIME)
             SELECT
-                PARSE_JSON('{payload.replace("'", "''")}'),
+                PARSE_JSON(?),
                 CURRENT_TIMESTAMP()
-        """).collect()
+        """, params=[payload]).collect()
 
 
 master_df = load_master_data()
@@ -163,30 +163,55 @@ with tab_add:
 
         if uploaded_file is not None:
             try:
-                upload_df = pd.read_csv(uploaded_file)
+                upload_df = pd.read_csv(uploaded_file, dtype=str).fillna("")
                 required_cols = {"Date", "Measure", "AR", "TTMSales", "DSO"}
                 missing_cols = required_cols - set(upload_df.columns)
 
                 if missing_cols:
                     st.error(f"Missing required columns: {', '.join(missing_cols)}")
                 else:
+                    master_key = master_df["Date"].astype(str) + "|" + master_df["Measure"].astype(str)
+                    upload_key = upload_df["Date"].str.strip() + "|" + upload_df["Measure"].str.strip()
+                    existing_mask = upload_key.isin(master_key)
+                    num_updates = existing_mask.sum()
+                    num_new = len(upload_df) - num_updates
+                    if num_updates > 0:
+                        st.info(f"{num_updates} row(s) match existing Date+Measure and will be treated as updates.")
+                    if num_new > 0:
+                        st.info(f"{num_new} row(s) will be added as new records.")
+
                     st.dataframe(upload_df, use_container_width=True, hide_index=True)
-                    st.info(f"{len(upload_df)} record(s) ready to import.")
 
                     if st.button("Import All Records", type="primary", key="dso_bulk_import"):
                         events = []
+                        key_to_id = dict(zip(master_key, master_df["ID"]))
                         for _, row in upload_df.iterrows():
+                            k = row["Date"].strip() + "|" + row["Measure"].strip()
+                            existing_id = key_to_id.get(k)
                             events.append({
-                                "ID": str(uuid.uuid4()),
-                                "Date": str(row["Date"]),
-                                "Measure": str(row["Measure"]),
-                                "AR": str(row["AR"]),
-                                "TTMSales": str(row["TTMSales"]),
-                                "DSO": str(row["DSO"]),
+                                "ID": existing_id if existing_id else str(uuid.uuid4()),
+                                "Date": str(row["Date"]).strip(),
+                                "Measure": str(row["Measure"]).strip(),
+                                "AR": str(row["AR"]).strip(),
+                                "TTMSales": str(row["TTMSales"]).strip(),
+                                "DSO": str(row["DSO"]).strip(),
                                 "Enabled": True,
                             })
-                        write_events(events)
+                        total = len(events)
+                        progress_bar = st.progress(0, text=f"Processing 0 of {total}...")
+                        user = st.user.user_name
+                        for i, evt in enumerate(events, 1):
+                            evt["Changed By"] = user
+                            payload = json.dumps(evt)
+                            session.sql("""
+                                INSERT INTO CONFIG.RAW.DSO_ANALYSIS_EVENT_DATA
+                                    (SERIALIZED_SOURCE, EVENT_TIME)
+                                SELECT
+                                    PARSE_JSON(?),
+                                    CURRENT_TIMESTAMP()
+                            """, params=[payload]).collect()
+                            progress_bar.progress(i / total, text=f"Processed {i} of {total}...")
                         st.cache_data.clear()
-                        st.success(f"Imported {len(events)} record(s). Refresh to see updates.")
+                        st.rerun()
             except Exception as e:
                 st.error(f"Error reading CSV: {e}")

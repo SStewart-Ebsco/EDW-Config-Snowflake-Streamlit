@@ -5,10 +5,7 @@ import uuid
 
 session = st.session_state["conn"].session()
 
-# st.set_page_config(page_title="Balance Sheet Mapping Admin", layout="wide")
-# st.title("Balance Sheet Mapping Admin")
-
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=30)
 def load_master_data():
     df = session.sql("""
         SELECT
@@ -32,13 +29,13 @@ def write_events(events: list[dict]):
     for evt in events:
         evt["Changed By"] = user
         payload = json.dumps(evt)
-        session.sql(f"""
+        session.sql("""
             INSERT INTO CONFIG.RAW.BALANCE_SHEET_MAPPING_EVENTDATA
                 (SERIALIZED_SOURCE, EVENT_TIME)
             SELECT
-                PARSE_JSON('{payload.replace("'", "''")}'),
+                PARSE_JSON(?),
                 CURRENT_TIMESTAMP()
-        """).collect()
+        """, params=[payload]).collect()
 
 def find_overlaps(df, entity, gl_min, gl_max):
     entity_df = df[
@@ -53,7 +50,7 @@ def find_overlaps(df, entity, gl_min, gl_max):
 
 master_df = load_master_data()
 
-tab_edit, tab_add = st.tabs(["Edit Existing", "Add New"])
+tab_edit, tab_add, tab_bulk = st.tabs(["Edit Existing", "Add New", "Bulk Upload"])
 
 with tab_edit:
     st.caption("Edit rows below. Changes are saved as change events with full audit trail.")
@@ -189,4 +186,71 @@ with tab_add:
                 st.cache_data.clear()
                 st.success(f"Added mapping: {new_id}")
                 st.rerun()
+
+with tab_bulk:
+    st.subheader("Bulk Upload")
+    st.caption("Upload a CSV file with columns: BalanceSheet Entity, Minimum GL Value, Maximum GL Value")
+
+    uploaded_file = st.file_uploader("Choose a CSV file", type="csv", key="bulk_upload")
+
+    if uploaded_file is not None:
+        try:
+            upload_df = pd.read_csv(uploaded_file, dtype=str).fillna("")
+            required_cols = {"BalanceSheet Entity", "Minimum GL Value", "Maximum GL Value"}
+            missing_cols = required_cols - set(upload_df.columns)
+            if missing_cols:
+                st.error(f"CSV is missing required columns: {', '.join(missing_cols)}")
+            else:
+                extra_cols = set(upload_df.columns) - required_cols
+                if extra_cols:
+                    st.warning(f"Ignoring unrecognized columns: {', '.join(extra_cols)}")
+                upload_df = upload_df[[c for c in required_cols if c in upload_df.columns]]
+
+                invalid_rows = upload_df[upload_df["BalanceSheet Entity"].str.strip() == ""]
+                if not invalid_rows.empty:
+                    st.error(f"{len(invalid_rows)} row(s) are missing a BalanceSheet Entity value.")
+                else:
+                    master_key = master_df["BalanceSheet Entity"] + "|" + master_df["Minimum GL Value"].astype(str)
+                    upload_key = upload_df["BalanceSheet Entity"].str.strip() + "|" + upload_df["Minimum GL Value"].str.strip()
+                    existing_mask = upload_key.isin(master_key)
+                    num_updates = existing_mask.sum()
+                    num_new = len(upload_df) - num_updates
+                    if num_updates > 0:
+                        st.info(f"{num_updates} row(s) match existing mappings and will be treated as updates.")
+                    if num_new > 0:
+                        st.info(f"{num_new} row(s) will be added as new mappings.")
+
+                    st.dataframe(upload_df, hide_index=True, use_container_width=True)
+
+                    if st.button("Confirm Bulk Upload", type="primary", key="bulk_confirm"):
+                        events = []
+                        key_to_id = dict(zip(master_key, master_df["ID"]))
+                        for _, row in upload_df.iterrows():
+                            k = row["BalanceSheet Entity"].strip() + "|" + row["Minimum GL Value"].strip()
+                            existing_id = key_to_id.get(k)
+                            events.append({
+                                "ID": existing_id if existing_id else str(uuid.uuid4()),
+                                "BalanceSheet Entity": row["BalanceSheet Entity"].strip(),
+                                "Minimum GL Value": row["Minimum GL Value"].strip(),
+                                "Maximum GL Value": row["Maximum GL Value"].strip(),
+                                "Enabled": True,
+                            })
+                        total = len(events)
+                        progress_bar = st.progress(0, text=f"Processing 0 of {total}...")
+                        user = st.user.user_name
+                        for i, evt in enumerate(events, 1):
+                            evt["Changed By"] = user
+                            payload = json.dumps(evt)
+                            session.sql("""
+                                INSERT INTO CONFIG.RAW.BALANCE_SHEET_MAPPING_EVENTDATA
+                                    (SERIALIZED_SOURCE, EVENT_TIME)
+                                SELECT
+                                    PARSE_JSON(?),
+                                    CURRENT_TIMESTAMP()
+                            """, params=[payload]).collect()
+                            progress_bar.progress(i / total, text=f"Processed {i} of {total}...")
+                        st.cache_data.clear()
+                        st.rerun()
+        except Exception as e:
+            st.error(f"Error reading CSV: {e}")
 

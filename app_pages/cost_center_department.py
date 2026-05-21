@@ -41,13 +41,13 @@ def write_events(events: list[dict]):
     for evt in events:
         evt["Changed By"] = user
         payload = json.dumps(evt)
-        session.sql(f"""
+        session.sql("""
             INSERT INTO CONFIG.RAW.ACCOUNT_EXCEPTION_EVENT_DATA
                 (SERIALIZED_SOURCE, EVENT_TIME)
             SELECT
-                PARSE_JSON('{payload.replace("'", "''")}'),
+                PARSE_JSON(?),
                 CURRENT_TIMESTAMP()
-        """).collect()
+        """, params=[payload]).collect()
 
 
 master_df = load_master_data()
@@ -56,7 +56,7 @@ if st.button("🔄 Refresh Data", key="refresh"):
     st.cache_data.clear()
     st.rerun()
     
-tab_edit, tab_add = st.tabs(["Edit Existing", "Add New"])
+tab_edit, tab_add, tab_bulk = st.tabs(["Edit Existing", "Add New", "Bulk Upload"])
 
 with tab_edit:
     st.caption("Edit rows below. Changes are saved as change events with full audit trail.")
@@ -175,3 +175,75 @@ with tab_add:
             write_events([evt])
             st.cache_data.clear()
             st.success(f"Added rule: {new_id}. Refresh to see updates.")
+
+with tab_bulk:
+    st.subheader("Bulk Upload")
+    st.caption("Upload a CSV file with columns: GL Account Number, Ledger, Functional Area, Company Code, Profit Center, Cost Center")
+
+    uploaded_file = st.file_uploader("Choose a CSV file", type="csv", key="bulk_upload")
+
+    if uploaded_file is not None:
+        try:
+            upload_df = pd.read_csv(uploaded_file, dtype=str).fillna("")
+            required_cols = {"GL Account Number", "Ledger", "Functional Area", "Company Code"}
+            all_cols = {"GL Account Number", "Ledger", "Functional Area", "Company Code", "Profit Center", "Cost Center"}
+            missing_cols = required_cols - set(upload_df.columns)
+            if missing_cols:
+                st.error(f"CSV is missing required columns: {', '.join(missing_cols)}")
+            else:
+                extra_cols = set(upload_df.columns) - all_cols
+                if extra_cols:
+                    st.warning(f"Ignoring unrecognized columns: {', '.join(extra_cols)}")
+                upload_df = upload_df[[c for c in all_cols if c in upload_df.columns]]
+                for col in all_cols:
+                    if col not in upload_df.columns:
+                        upload_df[col] = ""
+
+                invalid_rows = upload_df[upload_df["GL Account Number"].str.strip() == ""]
+                if not invalid_rows.empty:
+                    st.error(f"{len(invalid_rows)} row(s) are missing a GL Account Number value.")
+                else:
+                    existing_mask = upload_df["GL Account Number"].isin(master_df["GL Account Number"])
+                    num_updates = existing_mask.sum()
+                    num_new = len(upload_df) - num_updates
+                    if num_updates > 0:
+                        st.info(f"{num_updates} row(s) match existing GL Account Numbers and will be treated as updates.")
+                    if num_new > 0:
+                        st.info(f"{num_new} row(s) will be added as new rules.")
+
+                    st.dataframe(upload_df, hide_index=True, use_container_width=True)
+
+                    if st.button("Confirm Bulk Upload", type="primary", key="bulk_confirm"):
+                        events = []
+                        gl_to_id = dict(zip(master_df["GL Account Number"], master_df["ID"]))
+                        for _, row in upload_df.iterrows():
+                            gl = row["GL Account Number"].strip()
+                            existing_id = gl_to_id.get(gl)
+                            events.append({
+                                "ID": existing_id if existing_id else str(uuid.uuid4()),
+                                "GL Account Number": gl,
+                                "Ledger": row["Ledger"].strip(),
+                                "Functional Area": row["Functional Area"].strip(),
+                                "Company Code": row["Company Code"].strip(),
+                                "Profit Center": row["Profit Center"].strip(),
+                                "Cost Center": row["Cost Center"].strip(),
+                                "Enabled": True,
+                            })
+                        total = len(events)
+                        progress_bar = st.progress(0, text=f"Processing 0 of {total}...")
+                        user = st.user.user_name
+                        for i, evt in enumerate(events, 1):
+                            evt["Changed By"] = user
+                            payload = json.dumps(evt)
+                            session.sql("""
+                                INSERT INTO CONFIG.RAW.ACCOUNT_EXCEPTION_EVENT_DATA
+                                    (SERIALIZED_SOURCE, EVENT_TIME)
+                                SELECT
+                                    PARSE_JSON(?),
+                                    CURRENT_TIMESTAMP()
+                            """, params=[payload]).collect()
+                            progress_bar.progress(i / total, text=f"Processed {i} of {total}...")
+                        st.cache_data.clear()
+                        st.rerun()
+        except Exception as e:
+            st.error(f"Error reading CSV: {e}")

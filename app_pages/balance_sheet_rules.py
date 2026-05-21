@@ -31,13 +31,12 @@ def write_events(events: list):
     for evt in events:
         evt["Changed By"] = user
         payload = json.dumps(evt)
-        safe = payload.replace("'", "\\'\\'")
-        session.sql(f"""
+        session.sql("""
             INSERT INTO CONFIG.RAW.BALANCE_SHEET_RULES_EVENT_DATA
                 (SERIALIZED_SOURCE)
             SELECT
-                PARSE_JSON('{safe}')
-        """).collect()
+                PARSE_JSON(?)
+        """, params=[payload]).collect()
 
 def find_duplicate_code(df, code, exclude_id=None):
     dupes = df[(df["Code"] == code) & (df["Enabled"] == True)]
@@ -52,7 +51,7 @@ if st.button("🔄 Refresh Data", key="refresh"):
     st.rerun()
 
 # tab_edit, tab_add, tab_audit = st.tabs(["Edit Rules", "Add Rule", "Audit Trail"])
-tab_edit, tab_add = st.tabs(["Edit Rules", "Add Rule"])
+tab_edit, tab_add, tab_bulk = st.tabs(["Edit Rules", "Add Rule", "Bulk Upload"])
 
 with tab_edit:
     st.caption("Edit rows below. Changes are saved as change events with full audit trail.")
@@ -161,6 +160,69 @@ with tab_add:
                 write_events([evt])
                 st.cache_data.clear()
                 st.success(f"Added rule: {new_id}. Refresh to see updates.")
+
+with tab_bulk:
+    st.subheader("Bulk Upload")
+    st.caption("Upload a CSV file with columns: Code, Description")
+
+    uploaded_file = st.file_uploader("Choose a CSV file", type="csv", key="bulk_upload")
+
+    if uploaded_file is not None:
+        try:
+            upload_df = pd.read_csv(uploaded_file, dtype=str).fillna("")
+            required_cols = {"Code", "Description"}
+            missing_cols = required_cols - set(upload_df.columns)
+            if missing_cols:
+                st.error(f"CSV is missing required columns: {', '.join(missing_cols)}")
+            else:
+                extra_cols = set(upload_df.columns) - required_cols
+                if extra_cols:
+                    st.warning(f"Ignoring unrecognized columns: {', '.join(extra_cols)}")
+                upload_df = upload_df[[c for c in required_cols if c in upload_df.columns]]
+
+                invalid_rows = upload_df[upload_df["Code"].str.strip() == ""]
+                if not invalid_rows.empty:
+                    st.error(f"{len(invalid_rows)} row(s) are missing a Code value.")
+                else:
+                    existing_mask = upload_df["Code"].isin(master_df["Code"])
+                    num_updates = existing_mask.sum()
+                    num_new = len(upload_df) - num_updates
+                    if num_updates > 0:
+                        st.info(f"{num_updates} row(s) match existing Codes and will be treated as updates.")
+                    if num_new > 0:
+                        st.info(f"{num_new} row(s) will be added as new rules.")
+
+                    st.dataframe(upload_df, hide_index=True, use_container_width=True)
+
+                    if st.button("Confirm Bulk Upload", type="primary", key="bulk_confirm"):
+                        events = []
+                        code_to_id = dict(zip(master_df["Code"], master_df["ID"]))
+                        for _, row in upload_df.iterrows():
+                            code = row["Code"].strip()
+                            existing_id = code_to_id.get(code)
+                            events.append({
+                                "ID": existing_id if existing_id else str(uuid.uuid4()),
+                                "Code": code,
+                                "Description": row["Description"].strip(),
+                                "Enabled": True,
+                            })
+                        total = len(events)
+                        progress_bar = st.progress(0, text=f"Processing 0 of {total}...")
+                        user = st.user.user_name
+                        for i, evt in enumerate(events, 1):
+                            evt["Changed By"] = user
+                            payload = json.dumps(evt)
+                            session.sql("""
+                                INSERT INTO CONFIG.RAW.BALANCE_SHEET_RULES_EVENT_DATA
+                                    (SERIALIZED_SOURCE)
+                                SELECT
+                                    PARSE_JSON(?)
+                            """, params=[payload]).collect()
+                            progress_bar.progress(i / total, text=f"Processed {i} of {total}...")
+                        st.cache_data.clear()
+                        st.rerun()
+        except Exception as e:
+            st.error(f"Error reading CSV: {e}")
 
 # with tab_audit:
 #     st.subheader("Audit Trail")
