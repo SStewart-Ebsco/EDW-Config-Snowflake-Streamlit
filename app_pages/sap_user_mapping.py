@@ -42,10 +42,6 @@ def write_events(events: list[dict]):
 
 master_df = load_master_data()
 
-if st.button("\U0001f504 Refresh Data", key="sap_refresh"):
-    st.cache_data.clear()
-    st.rerun()
-
 tab_edit, tab_add, tab_bulk = st.tabs(["Edit Existing", "Add New", "Bulk Upload"])
 
 with tab_edit:
@@ -115,7 +111,7 @@ with tab_edit:
                 st.warning(f"Disabling {len(deletes)} mapping(s).")
             write_events(changes)
             st.cache_data.clear()
-            st.success(f"Saved {len(changes)} item(s). Refresh to see updates.")
+            st.rerun()
         else:
             st.info("No changes detected.")
 

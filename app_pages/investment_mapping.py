@@ -58,10 +58,6 @@ def find_overlaps(df, investment, profit_center, gl_min, gl_max):
     return overlaps
 
 master_df = load_master_data()
-
-if st.button("🔄 Refresh Data", key="refresh"):
-    st.cache_data.clear()
-    st.rerun()
     
 tab_edit, tab_add, tab_bulk = st.tabs(["Edit Existing", "Add New", "Bulk Upload"])
 
@@ -169,7 +165,7 @@ with tab_edit:
                 st.warning(f"Disabling {len(deletes)} mapping(s): {', '.join(deletes)}")
             write_events(changes)
             st.cache_data.clear()
-            st.success(f"Saved {len(changes)} item(s). Refresh to see updates.")
+            st.rerun()
         else:
             st.info("No changes detected.")
 

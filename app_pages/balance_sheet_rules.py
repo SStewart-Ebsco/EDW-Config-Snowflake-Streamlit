@@ -46,10 +46,6 @@ def find_duplicate_code(df, code, exclude_id=None):
 
 master_df = load_master_data()
 
-if st.button("🔄 Refresh Data", key="refresh"):
-    st.cache_data.clear()
-    st.rerun()
-
 # tab_edit, tab_add, tab_audit = st.tabs(["Edit Rules", "Add Rule", "Audit Trail"])
 tab_edit, tab_add, tab_bulk = st.tabs(["Edit Rules", "Add Rule", "Bulk Upload"])
 
@@ -129,7 +125,7 @@ with tab_edit:
                 st.warning(f"Disabling {len(deletes)} rule(s).")
             write_events(changes)
             st.cache_data.clear()
-            st.success(f"Saved {len(changes)} event(s). Refresh to see updates.")
+            st.rerun()
         else:
             st.info("No changes detected.")
 

@@ -42,11 +42,7 @@ def write_events(events: list[dict]):
 
 master_df = load_master_data()
 
-if st.button("\U0001f504 Refresh Data", key="dso_refresh"):
-    st.cache_data.clear()
-    st.rerun()
-
-tab_edit, tab_add = st.tabs(["Edit Existing", "Add New"])
+tab_edit, tab_add, tab_bulk = st.tabs(["Edit Existing", "Add New", "Bulk Upload"])
 
 with tab_edit:
     st.caption("Edit rows below. Changes are saved as change events with full audit trail.")
@@ -115,103 +111,100 @@ with tab_edit:
                 st.warning(f"Disabling {len(deletes)} record(s).")
             write_events(changes)
             st.cache_data.clear()
-            st.success(f"Saved {len(changes)} item(s). Refresh to see updates.")
+            st.rerun()
         else:
             st.info("No changes detected.")
 
 with tab_add:
-    add_single, add_bulk = st.tabs(["Single Record", "Bulk Upload (CSV)"])
+    st.subheader("Add New Record")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        new_date = st.date_input("Date", key="dso_new_date")
+    with col2:
+        new_measure = st.text_input("Measure", key="dso_new_measure")
+    with col3:
+        new_ar = st.number_input("AR", value=0.00, format="%.2f", key="dso_new_ar")
+    col4, col5 = st.columns(2)
+    with col4:
+        new_ttmsales = st.number_input("TTM Sales", value=0.00, format="%.2f", key="dso_new_ttmsales")
+    with col5:
+        new_dso = st.number_input("DSO", value=0.00, format="%.2f", key="dso_new_dso")
 
-    with add_single:
-        st.subheader("Add New Record")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            new_date = st.date_input("Date", key="dso_new_date")
-        with col2:
-            new_measure = st.text_input("Measure", key="dso_new_measure")
-        with col3:
-            new_ar = st.number_input("AR", value=0.00, format="%.2f", key="dso_new_ar")
-        col4, col5 = st.columns(2)
-        with col4:
-            new_ttmsales = st.number_input("TTM Sales", value=0.00, format="%.2f", key="dso_new_ttmsales")
-        with col5:
-            new_dso = st.number_input("DSO", value=0.00, format="%.2f", key="dso_new_dso")
+    if st.button("Add Record", type="primary", key="dso_add"):
+        if not all([new_date, new_measure]):
+            st.error("Date and Measure are required.")
+        else:
+            new_id = str(uuid.uuid4())
+            evt = {
+                "ID": new_id,
+                "Date": str(new_date),
+                "Measure": new_measure,
+                "AR": str(new_ar),
+                "TTMSales": str(new_ttmsales),
+                "DSO": str(new_dso),
+                "Enabled": True,
+            }
+            write_events([evt])
+            st.cache_data.clear()
+            st.rerun()
 
-        if st.button("Add Record", type="primary", key="dso_add"):
-            if not all([new_date, new_measure]):
-                st.error("Date and Measure are required.")
+with tab_bulk:
+    st.subheader("Bulk Upload")
+    st.caption("Upload a CSV with columns: Date, Measure, AR, TTMSales, DSO")
+
+    uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"], key="dso_csv_upload")
+
+    if uploaded_file is not None:
+        try:
+            upload_df = pd.read_csv(uploaded_file, dtype=str).fillna("")
+            required_cols = {"Date", "Measure", "AR", "TTMSales", "DSO"}
+            missing_cols = required_cols - set(upload_df.columns)
+
+            if missing_cols:
+                st.error(f"Missing required columns: {', '.join(missing_cols)}")
             else:
-                new_id = str(uuid.uuid4())
-                evt = {
-                    "ID": new_id,
-                    "Date": str(new_date),
-                    "Measure": new_measure,
-                    "AR": str(new_ar),
-                    "TTMSales": str(new_ttmsales),
-                    "DSO": str(new_dso),
-                    "Enabled": True,
-                }
-                write_events([evt])
-                st.cache_data.clear()
-                st.success(f"Added record: {new_id}. Refresh to see updates.")
+                master_key = master_df["Date"].astype(str) + "|" + master_df["Measure"].astype(str)
+                upload_key = upload_df["Date"].str.strip() + "|" + upload_df["Measure"].str.strip()
+                existing_mask = upload_key.isin(master_key)
+                num_updates = existing_mask.sum()
+                num_new = len(upload_df) - num_updates
+                if num_updates > 0:
+                    st.info(f"{num_updates} row(s) match existing Date+Measure and will be treated as updates.")
+                if num_new > 0:
+                    st.info(f"{num_new} row(s) will be added as new records.")
 
-    with add_bulk:
-        st.subheader("Bulk Upload")
-        st.caption("Upload a CSV with columns: **Date, Measure, AR, TTMSales, DSO**")
+                st.dataframe(upload_df, use_container_width=True, hide_index=True)
 
-        uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"], key="dso_csv_upload")
-
-        if uploaded_file is not None:
-            try:
-                upload_df = pd.read_csv(uploaded_file, dtype=str).fillna("")
-                required_cols = {"Date", "Measure", "AR", "TTMSales", "DSO"}
-                missing_cols = required_cols - set(upload_df.columns)
-
-                if missing_cols:
-                    st.error(f"Missing required columns: {', '.join(missing_cols)}")
-                else:
-                    master_key = master_df["Date"].astype(str) + "|" + master_df["Measure"].astype(str)
-                    upload_key = upload_df["Date"].str.strip() + "|" + upload_df["Measure"].str.strip()
-                    existing_mask = upload_key.isin(master_key)
-                    num_updates = existing_mask.sum()
-                    num_new = len(upload_df) - num_updates
-                    if num_updates > 0:
-                        st.info(f"{num_updates} row(s) match existing Date+Measure and will be treated as updates.")
-                    if num_new > 0:
-                        st.info(f"{num_new} row(s) will be added as new records.")
-
-                    st.dataframe(upload_df, use_container_width=True, hide_index=True)
-
-                    if st.button("Import All Records", type="primary", key="dso_bulk_import"):
-                        events = []
-                        key_to_id = dict(zip(master_key, master_df["ID"]))
-                        for _, row in upload_df.iterrows():
-                            k = row["Date"].strip() + "|" + row["Measure"].strip()
-                            existing_id = key_to_id.get(k)
-                            events.append({
-                                "ID": existing_id if existing_id else str(uuid.uuid4()),
-                                "Date": str(row["Date"]).strip(),
-                                "Measure": str(row["Measure"]).strip(),
-                                "AR": str(row["AR"]).strip(),
-                                "TTMSales": str(row["TTMSales"]).strip(),
-                                "DSO": str(row["DSO"]).strip(),
-                                "Enabled": True,
-                            })
-                        total = len(events)
-                        progress_bar = st.progress(0, text=f"Processing 0 of {total}...")
-                        user = st.user.user_name
-                        for i, evt in enumerate(events, 1):
-                            evt["Changed By"] = user
-                            payload = json.dumps(evt)
-                            session.sql("""
-                                INSERT INTO CONFIG.RAW.DSO_ANALYSIS_EVENT_DATA
-                                    (SERIALIZED_SOURCE, EVENT_TIME)
-                                SELECT
-                                    PARSE_JSON(?),
-                                    CURRENT_TIMESTAMP()
-                            """, params=[payload]).collect()
-                            progress_bar.progress(i / total, text=f"Processed {i} of {total}...")
-                        st.cache_data.clear()
-                        st.rerun()
-            except Exception as e:
-                st.error(f"Error reading CSV: {e}")
+                if st.button("Confirm Bulk Upload", type="primary", key="dso_bulk_import"):
+                    events = []
+                    key_to_id = dict(zip(master_key, master_df["ID"]))
+                    for _, row in upload_df.iterrows():
+                        k = row["Date"].strip() + "|" + row["Measure"].strip()
+                        existing_id = key_to_id.get(k)
+                        events.append({
+                            "ID": existing_id if existing_id else str(uuid.uuid4()),
+                            "Date": str(row["Date"]).strip(),
+                            "Measure": str(row["Measure"]).strip(),
+                            "AR": str(row["AR"]).strip(),
+                            "TTMSales": str(row["TTMSales"]).strip(),
+                            "DSO": str(row["DSO"]).strip(),
+                            "Enabled": True,
+                        })
+                    total = len(events)
+                    progress_bar = st.progress(0, text=f"Processing 0 of {total}...")
+                    user = st.user.user_name
+                    for i, evt in enumerate(events, 1):
+                        evt["Changed By"] = user
+                        payload = json.dumps(evt)
+                        session.sql("""
+                            INSERT INTO CONFIG.RAW.DSO_ANALYSIS_EVENT_DATA
+                                (SERIALIZED_SOURCE, EVENT_TIME)
+                            SELECT
+                                PARSE_JSON(?),
+                                CURRENT_TIMESTAMP()
+                        """, params=[payload]).collect()
+                        progress_bar.progress(i / total, text=f"Processed {i} of {total}...")
+                    st.cache_data.clear()
+                    st.rerun()
+        except Exception as e:
+            st.error(f"Error reading CSV: {e}")
